@@ -1253,7 +1253,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
 		for _, auth := range available {
-			if auth.ID == cachedAuthID && !quotaCapacityExhausted(auth, model, now) {
+			if auth.ID == cachedAuthID && (!selectorUsesQuotaDrain(s.fallback) || !quotaCapacityExhausted(auth, model, now)) {
 				bind(auth.ID)
 				entry.Infof("session-affinity: cache hit | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 				return auth, nil
@@ -1275,7 +1275,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	if fallbackKey != "" {
 		if cachedAuthID, ok := s.cache.Get(fallbackKey); ok {
 			for _, auth := range available {
-				if auth.ID == cachedAuthID && !quotaCapacityExhausted(auth, model, now) {
+				if auth.ID == cachedAuthID && (!selectorUsesQuotaDrain(s.fallback) || !quotaCapacityExhausted(auth, model, now)) {
 					if !isSubagent || s.subagentAffinity {
 						bind(auth.ID)
 						if isFork {
@@ -1341,7 +1341,7 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 
 	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
 		for _, auth := range available {
-			if auth == nil || auth.ID != match.AuthID || quotaCapacityExhausted(auth, model, now) {
+			if auth == nil || auth.ID != match.AuthID || (selectorUsesQuotaDrain(s.fallback) && quotaCapacityExhausted(auth, model, now)) {
 				continue
 			}
 			if match.SessionID != "" {
