@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/quotadrain"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
@@ -47,6 +48,8 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 		state.strategy = "weighted-round-robin"
 	case "fill-first", "fillfirst", "ff":
 		state.strategy = "fill-first"
+	case "quota-drain", "quotadrain", "qd":
+		state.strategy = "quota-drain"
 	}
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
@@ -70,6 +73,8 @@ func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 		selector = &coreauth.WeightedRoundRobinSelector{}
 	case "fill-first":
 		selector = &coreauth.FillFirstSelector{}
+	case "quota-drain":
+		selector = &coreauth.QuotaDrainSelector{}
 	default:
 		selector = &coreauth.RoundRobinSelector{}
 	}
@@ -232,6 +237,9 @@ func (s *Service) applyManagerConfig(ctx context.Context, commit configCommit) b
 		return false
 	}
 	s.coreManager.SetOAuthModelAlias(commit.cfg.OAuthModelAlias)
+	if s.quotaDrainCollector != nil {
+		s.quotaDrainCollector.UpdateEnabled(quotadrain.StrategyEnabled(commit.cfg.Routing.Strategy))
+	}
 	return true
 }
 

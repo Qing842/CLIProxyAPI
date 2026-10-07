@@ -225,6 +225,9 @@ func (s *Service) handleAuthUpdates(ctx context.Context, updates []watcher.AuthU
 	locked = false
 	s.authUpdateMu.Unlock()
 	s.runModelRegistrationTasks(registrationCtx, tasks)
+	if s.quotaDrainCollector != nil {
+		s.quotaDrainCollector.Wake()
+	}
 	finishAuthRegistrations(s, startedRegs)
 	registrationsFinished = true
 	waitAuthRegistrations(skippedWaits)
