@@ -9,6 +9,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/quotadrain"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
@@ -77,6 +78,9 @@ func (s *Service) Run(ctx context.Context) error {
 
 	s.applyRetryConfig(s.cfg)
 	s.configureCooldownStateStore(s.cfg)
+	if s.coreManager != nil && !homeEnabled && s.quotaDrainCollector == nil {
+		s.quotaDrainCollector = quotadrain.NewCollector(s.coreManager)
+	}
 
 	s.registerPluginAuthParser()
 	if s.coreManager != nil && !homeEnabled {
@@ -211,6 +215,9 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	s.registerModelRefreshCallback()
+	if s.quotaDrainCollector != nil {
+		s.quotaDrainCollector.Start(ctx, quotadrain.StrategyEnabled(s.cfg.Routing.Strategy))
+	}
 	if !homeEnabled {
 		go s.runAntigravityModelRefresh(ctx)
 	}
@@ -300,6 +307,9 @@ func (s *Service) Shutdown(ctx context.Context) error {
 
 		if s.watcherCancel != nil {
 			s.watcherCancel()
+		}
+		if s.quotaDrainCollector != nil {
+			s.quotaDrainCollector.Stop()
 		}
 		if s.coreManager != nil {
 			s.coreManager.StopAutoRefresh()

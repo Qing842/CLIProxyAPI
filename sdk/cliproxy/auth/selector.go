@@ -71,6 +71,16 @@ func weightedSelectorStateModel(ctx context.Context, availabilityModel string) s
 // rolling-window subscription caps (e.g. chat message limits).
 type FillFirstSelector struct{}
 
+// QuotaDrainSelector drains the long-window quota most likely to expire unused.
+// A selected credential stays pinned until its usable pool changes, a relevant
+// quota window is exhausted, or a new long-window budget period is observed.
+type QuotaDrainSelector struct {
+	mu      sync.Mutex
+	cursors map[string]int
+	pins    map[string]*quotaDrainPin
+	maxKeys int
+}
+
 type blockReason int
 
 const (
@@ -820,6 +830,181 @@ func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, op
 	return available[0], nil
 }
 
+// Pick selects a credential using proactive quota snapshots.
+// Priority remains authoritative: a lower priority tier is considered only when
+// every otherwise-available credential in higher tiers is quota-exhausted.
+func (s *QuotaDrainSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
+	_ = opts
+	now := time.Now()
+	availableByPriority, cooldownCount, earliestCooldown := collectAvailableByPriority(auths, model, now)
+	if len(availableByPriority) == 0 {
+		if cooldownCount == len(auths) && !earliestCooldown.IsZero() {
+			providerForError := provider
+			if strings.EqualFold(strings.TrimSpace(providerForError), "mixed") {
+				providerForError = ""
+			}
+			return nil, newModelCooldownError(model, providerForError, earliestCooldown.Sub(now))
+		}
+		return nil, &Error{Code: "auth_unavailable", Message: "no auth available"}
+	}
+
+	for _, priority := range quotaDrainPriorities(availableByPriority) {
+		available := availableByPriority[priority]
+		if strings.EqualFold(strings.TrimSpace(provider), "mixed") {
+			if selected := s.pickMixedProvider(ctx, model, available, now); selected != nil {
+				return selected, nil
+			}
+			continue
+		}
+		available = preferCodexWebsocketAuths(ctx, provider, available)
+		if selected := s.pickWithinProvider(provider, model, available, now); selected != nil {
+			return selected, nil
+		}
+	}
+
+	earliest := earliestCapacityReset(auths, model, now)
+	if !earliest.IsZero() {
+		providerForError := provider
+		if strings.EqualFold(strings.TrimSpace(providerForError), "mixed") {
+			providerForError = ""
+		}
+		return nil, newModelCooldownError(model, providerForError, earliest.Sub(now))
+	}
+	return nil, &Error{Code: "auth_unavailable", Message: "no auth available"}
+}
+
+func (s *QuotaDrainSelector) pickMixedProvider(ctx context.Context, model string, auths []*Auth, now time.Time) *Auth {
+	groups := make(map[string][]*Auth)
+	providers := make([]string, 0)
+	for _, auth := range auths {
+		providerKey := executorKeyFromAuth(auth)
+		if providerKey == "" {
+			continue
+		}
+		if _, exists := groups[providerKey]; !exists {
+			providers = append(providers, providerKey)
+		}
+		groups[providerKey] = append(groups[providerKey], auth)
+	}
+	sort.Strings(providers)
+	if len(providers) == 0 {
+		return nil
+	}
+
+	key := "mixed:" + canonicalModelKey(model)
+	start := s.nextCursorIndex(key, len(providers))
+	for offset := 0; offset < len(providers); offset++ {
+		providerKey := providers[(start+offset)%len(providers)]
+		candidates := preferCodexWebsocketAuths(ctx, providerKey, groups[providerKey])
+		if selected := s.pickWithinProvider(providerKey, model, candidates, now); selected != nil {
+			return selected
+		}
+	}
+	return nil
+}
+
+func (s *QuotaDrainSelector) pickWithinProvider(provider, model string, auths []*Auth, now time.Time) *Auth {
+	if len(auths) == 0 {
+		return nil
+	}
+
+	candidates := make([]quotaPinCandidate, 0, len(auths))
+	selectedAuths := make([]*Auth, 0, len(auths))
+	completeBudgetData := true
+	for _, auth := range auths {
+		rank := quotaCapacityRank(auth, model, now)
+		if rank.known && rank.exhausted {
+			continue
+		}
+		if !rank.urgencyKnown {
+			completeBudgetData = false
+		}
+		selectedAuths = append(selectedAuths, auth)
+		candidates = append(candidates, quotaPinCandidate{id: auth.ID, rank: rank, allowed: true})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	byID := make([]int, len(candidates))
+	for index := range byID {
+		byID[index] = index
+	}
+	sort.SliceStable(byID, func(i, j int) bool {
+		return candidates[byID[i]].id < candidates[byID[j]].id
+	})
+
+	key := strings.ToLower(strings.TrimSpace(provider)) + ":" + canonicalModelKey(model)
+	offset := s.nextCursorIndex(key, len(byID))
+	order := append(append(make([]int, 0, len(byID)), byID[offset:]...), byID[:offset]...)
+
+	if !completeBudgetData {
+		return selectedAuths[order[0]]
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	picked := pickQuotaPinned(s.pinLocked(key), candidates, order)
+	if picked < 0 {
+		return nil
+	}
+	return selectedAuths[picked]
+}
+
+func (s *QuotaDrainSelector) pinLocked(key string) *quotaDrainPin {
+	if s.pins == nil {
+		s.pins = make(map[string]*quotaDrainPin)
+	}
+	pin := s.pins[key]
+	if pin == nil {
+		limit := s.maxKeys
+		if limit <= 0 {
+			limit = 4096
+		}
+		if len(s.pins) >= limit {
+			s.pins = make(map[string]*quotaDrainPin)
+		}
+		pin = &quotaDrainPin{}
+		s.pins[key] = pin
+	}
+	return pin
+}
+
+func (s *QuotaDrainSelector) nextCursorIndex(key string, modulo int) int {
+	if modulo <= 0 {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cursors == nil {
+		s.cursors = make(map[string]int)
+	}
+	limit := s.maxKeys
+	if limit <= 0 {
+		limit = 4096
+	}
+	if _, exists := s.cursors[key]; !exists && len(s.cursors) >= limit {
+		s.cursors = make(map[string]int)
+	}
+	index := s.cursors[key] % modulo
+	s.cursors[key] = index + 1
+	return index
+}
+
+func earliestCapacityReset(auths []*Auth, model string, now time.Time) time.Time {
+	earliest := time.Time{}
+	for _, auth := range auths {
+		rank := quotaCapacityRank(auth, model, now)
+		if !rank.known || !rank.exhausted || rank.resetAt.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || rank.resetAt.Before(earliest) {
+			earliest = rank.resetAt
+		}
+	}
+	return earliest
+}
+
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
 	if auth == nil {
 		return true, blockReasonOther, time.Time{}
@@ -1058,7 +1243,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
 		for _, auth := range available {
-			if auth.ID == cachedAuthID {
+			if auth.ID == cachedAuthID && !quotaCapacityExhausted(auth, model, now) {
 				bind(auth.ID)
 				entry.Infof("session-affinity: cache hit | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 				return auth, nil
@@ -1080,7 +1265,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	if fallbackKey != "" {
 		if cachedAuthID, ok := s.cache.Get(fallbackKey); ok {
 			for _, auth := range available {
-				if auth.ID == cachedAuthID {
+				if auth.ID == cachedAuthID && !quotaCapacityExhausted(auth, model, now) {
 					if !isSubagent || s.subagentAffinity {
 						bind(auth.ID)
 						if isFork {
@@ -1138,14 +1323,15 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	if _, weighted := s.fallback.(*WeightedRoundRobinSelector); weighted {
 		availabilityCandidates = positiveWeightAuths(auths)
 	}
-	available, errAvailable := getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, time.Now())
+	now := time.Now()
+	available, errAvailable := getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, now)
 	if errAvailable != nil {
 		return nil, true, errAvailable
 	}
 
 	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
 		for _, auth := range available {
-			if auth == nil || auth.ID != match.AuthID {
+			if auth == nil || auth.ID != match.AuthID || quotaCapacityExhausted(auth, model, now) {
 				continue
 			}
 			if match.SessionID != "" {
