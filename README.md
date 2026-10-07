@@ -1,5 +1,9 @@
 # Qing842 CLIProxyAPI
 
+> **中文说明**  
+> 这是 Qing842 维护的 CLIProxyAPI Fork，用于持续同步上游能力，同时保留 Quota Drain、GHCR 多架构构建、生产部署与交接流程等维护版能力。  
+> 完整中文总览请看 [README_CN.md](README_CN.md)，生产交接请看 [docs/HANDOVER_CN.md](docs/HANDOVER_CN.md)。
+
 This repository is the maintained Qing842 fork of CLIProxyAPI.
 
 The fork tracks upstream CLIProxyAPI while preserving local production features and release automation. The primary handover documentation is maintained in Chinese because the production environment and operating procedures are maintained by Qing842.
