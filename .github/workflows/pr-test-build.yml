@@ -19,6 +19,8 @@ jobs:
           cache: true
       - name: Refresh models catalog
         run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Test quota-drain routing
+        run: go test ./sdk/cliproxy/auth ./internal/quotadrain ./sdk/cliproxy
       - name: Build
         run: |
           go build -o test-output ./cmd/server
