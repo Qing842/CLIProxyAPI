@@ -1,42 +1,48 @@
-# Qing842 CLIProxyAPI
+# Qing842 CLIProxyAPI 维护版
 
-> **中文说明**  
-> 这是 Qing842 维护的 CLIProxyAPI Fork，用于持续同步上游能力，同时保留 Quota Drain、GHCR 多架构构建、生产部署与交接流程等维护版能力。  
-> 完整中文总览请看 [README_CN.md](README_CN.md)，生产交接请看 [docs/HANDOVER_CN.md](docs/HANDOVER_CN.md)。
+[中文](README.md) | [English](README_EN.md)
 
-This repository is the maintained Qing842 fork of CLIProxyAPI.
+这是 Qing842 维护的 CLIProxyAPI Fork。目标不是替代上游，而是在持续同步上游能力的同时，稳定保留生产环境需要的自定义功能、构建流程和交接资料。
 
-The fork tracks upstream CLIProxyAPI while preserving local production features and release automation. The primary handover documentation is maintained in Chinese because the production environment and operating procedures are maintained by Qing842.
+## 当前自定义能力
 
-## Fork-specific features
+1. Quota Drain（额度消耗优先）路由。
+   - 支持 Antigravity、Codex、xAI OAuth 账号。
+   - 同优先级账号中，优先消耗“更容易在重置前浪费”的长期额度。
+   - 短周期额度负责可用性门控，长期额度负责排序。
+   - 额度数据不可用时安全退回普通轮询。
 
-- Quota Drain routing for Antigravity, Codex, and xAI OAuth credentials.
-- Native multi-architecture GHCR builds for linux/amd64 and linux/arm64.
-- Integration with the Qing842 fork of CLI Proxy API Management Center.
-- Production handover, release, rollback, and upstream-sync documentation.
+2. 自定义 GHCR 镜像。
+   - 镜像仓库：ghcr.io/qing842/cliproxyapi
+   - AMD64 使用 ubuntu-latest 原生构建。
+   - ARM64 使用 ubuntu-24.04-arm 原生构建。
+   - main 每次更新后自动生成 latest 和 sha-<commit> 多架构镜像。
 
-## Documentation
+3. 自定义管理中心。
+   - 仓库：https://github.com/Qing842/Cli-Proxy-API-Management-Center
+   - 生产配置通过 management.panel-github-repository 指向该 Fork。
+   - 管理中心包含 Quota Drain 选项并独立发布 management.html。
 
-- Chinese overview: README_CN.md
-- Handover: docs/HANDOVER_CN.md
-- Architecture: docs/ARCHITECTURE_CN.md
-- Deployment: docs/DEPLOYMENT_CN.md
-- Quota Drain: docs/QUOTA_DRAIN_CN.md
-- Release process: docs/RELEASE_CN.md
-- Upstream synchronization: docs/UPSTREAM_SYNC_CN.md
-- Troubleshooting: docs/TROUBLESHOOTING_CN.md
+## 文档入口
 
-## Repositories
+- 交接总览：docs/HANDOVER_CN.md
+- 架构：docs/ARCHITECTURE_CN.md
+- 部署与回滚：docs/DEPLOYMENT_CN.md
+- Quota Drain 规则：docs/QUOTA_DRAIN_CN.md
+- 发布流程：docs/RELEASE_CN.md
+- 同步上游：docs/UPSTREAM_SYNC_CN.md
+- 故障排查：docs/TROUBLESHOOTING_CN.md
 
-Maintained fork:
+## 上游关系
+
+维护版：
 https://github.com/Qing842/CLIProxyAPI
 
-Upstream:
+上游：
 https://github.com/router-for-me/CLIProxyAPI
 
-Management Center fork:
-https://github.com/Qing842/Cli-Proxy-API-Management-Center
+同步上游时不要使用 reset --hard 或 force push 覆盖维护版 main。统一使用临时同步分支合并 upstream/main，完成冲突处理和测试后再通过 PR 回到 main。
 
-## License and attribution
+## License
 
-This project remains under the upstream MIT license. Keep LICENSE and its copyright notices intact.
+本项目沿用上游 MIT License。LICENSE 必须保留原版权声明和许可文本。
