@@ -1204,7 +1204,13 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		availabilityCandidates = positiveWeightAuths(auths)
 	}
 	if primaryID == "" {
-		fallbackAuths, errAvailable := getSelectorAvailableAuths(ctx, availabilityCandidates, provider, model, now)
+		var fallbackAuths []*Auth
+		var errAvailable error
+		if selectorUsesQuotaDrain(s.fallback) {
+			fallbackAuths, errAvailable = getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, now)
+		} else {
+			fallbackAuths, errAvailable = getSelectorAvailableAuths(ctx, availabilityCandidates, provider, model, now)
+		}
 		if errAvailable != nil {
 			return nil, errAvailable
 		}
@@ -1212,13 +1218,17 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		return s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
 	}
 
-	// A single availability pass serves both lookups: the bound credential is validated against
-	// every priority tier, while the fallback selector keeps seeing only the highest tier.
+	// A single availability pass serves both lookups. Bound credentials are validated across
+	// every priority tier; quota-drain also needs lower tiers so it can fail over after an
+	// otherwise-available higher-priority credential exhausts its relevant quota pool.
 	available, err := getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, now)
 	if err != nil {
 		return nil, err
 	}
 	fallbackAuths := highestPriorityAuths(available)
+	if selectorUsesQuotaDrain(s.fallback) {
+		fallbackAuths = available
+	}
 
 	modelKey := canonicalModelKey(model)
 	cacheKey := provider + "::" + primaryID + "::" + modelKey
@@ -1373,6 +1383,9 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	}
 
 	fallbackAuths := highestPriorityAuths(available)
+	if selectorUsesQuotaDrain(s.fallback) {
+		fallbackAuths = available
+	}
 	auth, errPick := s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
 	if errPick != nil {
 		return nil, true, errPick
