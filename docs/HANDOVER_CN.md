@@ -78,6 +78,10 @@ sdk/cliproxy/auth/selector.go
 
 规则和限制见 QUOTA_DRAIN_CN.md。
 
+### 已验证生产行为
+
+2026-10-07 已使用真实 Antigravity Pro 多账号验证 Quota Drain。Gemini 请求按预期命中第 3 个高紧迫度账号，该账号 5 小时额度从 98% 降到 93%，周额度从 72% 降到 71%，与策略排序结果一致。当前可将 Quota Drain 视为已通过生产实测；上游配额接口或路由语义发生变化后需重新验证。
+
 ### GHCR 多架构发布
 
 工作流：
