@@ -8,14 +8,17 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
-func TestAntigravityArgonRequestType(t *testing.T) {
+func TestAntigravityArgonCarbonRequestType(t *testing.T) {
 	for _, tc := range []struct{ name, model, kind, want string }{
 		{"argon_high", "gemini-4-argon-high", "agent", ""},
 		{"argon_medium", "gemini-4-argon-medium", "agent", ""},
 		{"argon_low", "gemini-4-argon-low", "agent", ""},
-		{"carbon_unchanged", "gemini-4-carbon-high", "agent", "agent"},
+		{"carbon_high", "gemini-4-carbon-high", "agent", ""},
+		{"carbon_medium", "gemini-4-carbon-medium", "agent", ""},
+		{"carbon_low", "gemini-4-carbon-low", "agent", ""},
 		{"flash_unchanged", "gemini-3.8-flash-high", "agent", "agent"},
 		{"argon_search_unchanged", "gemini-4-argon-high", "web_search", "web_search"},
+		{"carbon_search_unchanged", "gemini-4-carbon-high", "web_search", "web_search"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := &AntigravityExecutor{}

@@ -65,8 +65,8 @@ func (e *AntigravityExecutor) buildRequestDoc(ctx context.Context, auth *cliprox
 		return nil, nil, errProject
 	}
 	geminiToAntigravityDoc(doc, modelName, projectID, derivedSessionIDs...)
-	// Argon rejects agent envelopes with third-party system instructions.
-	if strings.HasPrefix(modelName, "gemini-4-argon") && doc.Get("requestType").String() == "agent" {
+	// Argon and Carbon reject agent envelopes with third-party system instructions.
+	if (strings.HasPrefix(modelName, "gemini-4-argon") || strings.HasPrefix(modelName, "gemini-4-carbon")) && doc.Get("requestType").String() == "agent" {
 		_ = doc.Delete("requestType")
 	}
 	promptStructuredOutput := helps.PrepareAntigravityClaudeStructuredOutputDoc(modelName, doc)
