@@ -65,6 +65,10 @@ func (e *AntigravityExecutor) buildRequestDoc(ctx context.Context, auth *cliprox
 		return nil, nil, errProject
 	}
 	geminiToAntigravityDoc(doc, modelName, projectID, derivedSessionIDs...)
+	// Argon rejects agent envelopes with third-party system instructions.
+	if strings.HasPrefix(modelName, "gemini-4-argon") && doc.Get("requestType").String() == "agent" {
+		_ = doc.Delete("requestType")
+	}
 	promptStructuredOutput := helps.PrepareAntigravityClaudeStructuredOutputDoc(modelName, doc)
 
 	// Cap maxOutputTokens to model's max_completion_tokens from registry
